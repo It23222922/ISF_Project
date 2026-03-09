@@ -57,10 +57,9 @@ PLC_TAGS = {
 def set_line():
     data = request.json
 
-    line    = data.get('line')       # 'L1', 'L2', 'L3', 'L4'
-    media   = data.get('media')      # 'Option 1' ... 'Option 5'
-    product = data.get('product')    # 'Option 1' ... 'Option 15'
-    # ❌ QC removed from write — PLC controls it
+    line    = data.get('line')
+    media   = data.get('media')
+    product = data.get('product')
 
     if line not in PLC_TAGS:
         return jsonify({ 'status': 'error', 'message': f'Invalid line: {line}' }), 400
@@ -77,7 +76,6 @@ def set_line():
         with LogixDriver(PLC_IP) as plc:
             plc.write(tags['media'],   media_val)
             plc.write(tags['product'], product_val)
-            # ❌ No QC write — PLC handles it
 
         return jsonify({
             'status':  'success',
@@ -108,14 +106,12 @@ def set_all():
                 tags        = PLC_TAGS[line]
                 media_val   = MEDIA_MAP.get(values['media'])
                 product_val = PRODUCT_MAP.get(values['product'])
-                # ❌ QC removed from write — PLC controls it
 
                 if None in (media_val, product_val):
                     return jsonify({ 'status': 'error', 'message': f'Invalid value in {line}' }), 400
 
                 plc.write(tags['media'],   media_val)
                 plc.write(tags['product'], product_val)
-                # ❌ No QC write
 
         return jsonify({ 'status': 'success', 'message': 'All lines written to PLC' })
 
@@ -131,12 +127,72 @@ def get_qc():
     try:
         with LogixDriver(PLC_IP) as plc:
             qc_state = {
-                'L1': plc.read('L1_QC').value,  # reads 'Yes' or 'No'
+                'L1': plc.read('L1_QC').value,
                 'L2': plc.read('L2_QC').value,
                 'L3': plc.read('L3_QC').value,
                 'L4': plc.read('L4_QC').value,
             }
         return jsonify({ 'status': 'success', 'qc': qc_state })
+
+    except Exception as e:
+        return jsonify({ 'status': 'error', 'message': str(e) }), 500
+
+
+# ─────────────────────────────────────────
+# READ — L1 HMI button requests
+# ─────────────────────────────────────────
+@app.route('/api/get-requests', methods=['GET'])
+def get_requests():
+    try:
+        with LogixDriver(PLC_IP) as plc:
+            media_trigger   = bool(plc.read('L1_Media_Trig').value)
+            product_trigger = bool(plc.read('L1_Product_Trig').value)
+            media_req       = int(plc.read('L1_Media_Req').value)
+            product_req     = int(plc.read('L1_Product_Req').value)
+
+            # Convert number back to option string
+            media_option = next(
+                (k for k, v in MEDIA_MAP.items() if v == media_req), None
+            )
+            product_option = next(
+                (k for k, v in PRODUCT_MAP.items() if v == product_req), None
+            )
+
+            requests = {
+                'L1': {
+                    'media':          media_trigger,
+                    'product':        product_trigger,
+                    'media_option':   media_option,
+                    'product_option': product_option,
+                }
+            }
+
+        return jsonify({ 'status': 'success', 'requests': requests })
+
+    except Exception as e:
+        return jsonify({ 'status': 'error', 'message': str(e) }), 500
+
+
+# ─────────────────────────────────────────
+# WRITE — Reset L1 trigger after acknowledge
+# ─────────────────────────────────────────
+@app.route('/api/clear-request', methods=['POST'])
+def clear_request():
+    data = request.json
+    kind = data.get('kind')   # 'media' or 'product'
+
+    tag_map = {
+        'media':   'L1_Media_Trig',
+        'product': 'L1_Product_Trig',
+    }
+
+    if kind not in tag_map:
+        return jsonify({ 'status': 'error', 'message': 'Invalid kind' }), 400
+
+    try:
+        with LogixDriver(PLC_IP) as plc:
+            plc.write(tag_map[kind], 0)
+        return jsonify({ 'status': 'success' })
 
     except Exception as e:
         return jsonify({ 'status': 'error', 'message': str(e) }), 500

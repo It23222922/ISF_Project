@@ -2,8 +2,37 @@ import { useEffect, useState } from 'react';
 import { SystemState } from '../types';
 import { getSystemState } from '../utils/storage';
 
+// ─────────────────────────────────────────
+// Request state type
+// ─────────────────────────────────────────
+interface LineRequests {
+  media:          boolean;
+  product:        boolean;
+  media_option:   string | null;
+  product_option: string | null;
+}
+
+interface RequestState {
+  L1: LineRequests;
+}
+
 export function Screen1Display() {
   const [state, setState] = useState<SystemState>(getSystemState());
+  const [requests, setRequests] = useState<RequestState>({
+    L1: { media: false, product: false, media_option: null, product_option: null }
+  });
+  const [flash, setFlash] = useState(false);
+
+  // ─────────────────────────────────────────
+  // Flash timer — toggles every 500ms
+  // ─────────────────────────────────────────
+  useEffect(() => {
+    const flashInterval = setInterval(() => {
+      setFlash(prev => !prev)
+    }, 500)
+    return () => clearInterval(flashInterval)
+  }, [])
+
 
   useEffect(() => {
     // ─────────────────────────────────────────
@@ -14,7 +43,7 @@ export function Screen1Display() {
       const stored = getSystemState()
       setState(prev => ({
         ...prev,
-        L1: { ...stored.L1, qc: prev.L1.qc },  // preserve PLC qc value
+        L1: { ...stored.L1, qc: prev.L1.qc },
         L2: { ...stored.L2, qc: prev.L2.qc },
         L3: { ...stored.L3, qc: prev.L3.qc },
         L4: { ...stored.L4, qc: prev.L4.qc },
@@ -24,24 +53,20 @@ export function Screen1Display() {
     const storageInterval = setInterval(handleStorageChange, 500)
 
     // ─────────────────────────────────────────
-    // Poll QC from PLC only — never from storage
+    // Poll QC from PLC every 2 seconds
     // ─────────────────────────────────────────
     const fetchQC = async () => {
       try {
-        const res = await fetch('http://localhost:5000/api/get-qc')
+        const res  = await fetch('http://localhost:5000/api/get-qc')
         const data = await res.json()
-
         if (data.status === 'success') {
           setState(prev => {
-            // Only re-render if QC actually changed
             const hasChanged =
               prev.L1.qc !== data.qc.L1 ||
               prev.L2.qc !== data.qc.L2 ||
               prev.L3.qc !== data.qc.L3 ||
               prev.L4.qc !== data.qc.L4
-
-            if (!hasChanged) return prev  // no re-render, no flashing
-
+            if (!hasChanged) return prev
             return {
               ...prev,
               L1: { ...prev.L1, qc: data.qc.L1 },
@@ -55,15 +80,31 @@ export function Screen1Display() {
         console.error('❌ Could not read QC from PLC:', error)
       }
     }
+    fetchQC()
+    const qcInterval = setInterval(fetchQC, 2000)
 
-    fetchQC()                                      // read immediately on load
-    const qcInterval = setInterval(fetchQC, 2000)  // then every 2 seconds
+    // ─────────────────────────────────────────
+    // Poll HMI requests to show underglow
+    // ─────────────────────────────────────────
+    const fetchRequests = async () => {
+      try {
+        const res  = await fetch('http://localhost:5000/api/get-requests')
+        const data = await res.json()
+        if (data.status === 'success') {
+          setRequests(data.requests)
+        }
+      } catch (error) {
+        console.error('❌ Could not read requests:', error)
+      }
+    }
+    fetchRequests()
+    const requestInterval = setInterval(fetchRequests, 1000)
 
-    // Cleanup both intervals on unmount
     return () => {
       window.removeEventListener('storage', handleStorageChange)
       clearInterval(storageInterval)
       clearInterval(qcInterval)
+      clearInterval(requestInterval)
     }
   }, []);
 
@@ -73,6 +114,12 @@ export function Screen1Display() {
     { id: 'L3', data: state.L3 },
     { id: 'L4', data: state.L4 },
   ];
+
+  // Check if a line has any active request
+  const hasRequest = (id: string) => {
+    if (id === 'L1') return requests.L1.media || requests.L1.product
+    return false  // L2-L4 not yet configured
+  }
 
   return (
     <div className="min-h-screen bg-slate-800 p-8">
@@ -94,14 +141,32 @@ export function Screen1Display() {
 
           {/* Lines */}
           {lines.map((line, index) => (
-            <div 
+            <div
               key={line.id}
-              className={`grid grid-cols-[180px_1fr_1fr_180px] gap-4 px-6 py-8 ${
-                index < lines.length - 1 ? 'border-b-2 border-slate-600' : ''
-              }`}
+              className={`
+                grid grid-cols-[180px_1fr_1fr_180px] gap-4 px-6 py-8
+                transition-all duration-300
+                ${index < lines.length - 1 ? 'border-b-2 border-slate-600' : ''}
+                ${hasRequest(line.id)
+                  ? flash
+                    ? 'shadow-[0_0_30px_8px_rgba(239,68,68,0.8)] bg-red-950/40'   // ← flash ON
+                    : 'shadow-[0_0_10px_2px_rgba(239,68,68,0.2)] bg-red-950/10'   // ← flash OFF
+                  : ''
+                }
+              `}
             >
               <div className="flex items-center">
-                <span className="inline-flex min-w-28 justify-center rounded-xl border-2 border-primary-foreground/40 bg-primary px-4 py-3 text-5xl font-extrabold tracking-wider text-primary-foreground shadow-xl ring-2 ring-ring/60">
+                <span className={`
+                  inline-flex min-w-28 justify-center rounded-xl border-2 px-4 py-3
+                  text-5xl font-extrabold tracking-wider shadow-xl ring-2
+                  transition-all duration-300
+                  ${hasRequest(line.id)
+                    ? flash
+                      ? 'border-red-400 bg-red-600 text-white ring-red-400/60'       // ← flash ON
+                      : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'  // ← flash OFF
+                    : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'
+                  }
+                `}>
                   {line.id}
                 </span>
               </div>

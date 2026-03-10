@@ -55,8 +55,7 @@ PLC_TAGS = {
 # ─────────────────────────────────────────
 @app.route('/api/set-line', methods=['POST'])
 def set_line():
-    data = request.json
-
+    data    = request.json
     line    = data.get('line')
     media   = data.get('media')
     product = data.get('product')
@@ -76,7 +75,6 @@ def set_line():
         with LogixDriver(PLC_IP) as plc:
             plc.write(tags['media'],   media_val)
             plc.write(tags['product'], product_val)
-
         return jsonify({
             'status':  'success',
             'line':    line,
@@ -85,7 +83,6 @@ def set_line():
                 tags['product']: product_val,
             }
         })
-
     except Exception as e:
         return jsonify({ 'status': 'error', 'message': str(e) }), 500
 
@@ -96,25 +93,19 @@ def set_line():
 @app.route('/api/set-all', methods=['POST'])
 def set_all():
     data = request.json
-
     try:
         with LogixDriver(PLC_IP) as plc:
             for line, values in data.items():
                 if line not in PLC_TAGS:
                     continue
-
                 tags        = PLC_TAGS[line]
                 media_val   = MEDIA_MAP.get(values['media'])
                 product_val = PRODUCT_MAP.get(values['product'])
-
                 if None in (media_val, product_val):
                     return jsonify({ 'status': 'error', 'message': f'Invalid value in {line}' }), 400
-
                 plc.write(tags['media'],   media_val)
                 plc.write(tags['product'], product_val)
-
         return jsonify({ 'status': 'success', 'message': 'All lines written to PLC' })
-
     except Exception as e:
         return jsonify({ 'status': 'error', 'message': str(e) }), 500
 
@@ -133,13 +124,18 @@ def get_qc():
                 'L4': plc.read('L4_QC').value,
             }
         return jsonify({ 'status': 'success', 'qc': qc_state })
-
     except Exception as e:
         return jsonify({ 'status': 'error', 'message': str(e) }), 500
 
 
 # ─────────────────────────────────────────
-# READ — L1 HMI button requests
+# READ — L1 requests
+# Media:   always Option 1 (no user choice)
+# Product: just a request flag (no option)
+# ─────────────────────────────────────────
+# ─────────────────────────────────────────
+# READ — L1 requests
+# Also sets L1_Request_Active TRUE if any request pending
 # ─────────────────────────────────────────
 @app.route('/api/get-requests', methods=['GET'])
 def get_requests():
@@ -147,39 +143,32 @@ def get_requests():
         with LogixDriver(PLC_IP) as plc:
             media_trigger   = bool(plc.read('L1_Media_Trig').value)
             product_trigger = bool(plc.read('L1_Product_Trig').value)
-            media_req       = int(plc.read('L1_Media_Req').value)
-            product_req     = int(plc.read('L1_Product_Req').value)
 
-            # Convert number back to option string
-            media_option = next(
-                (k for k, v in MEDIA_MAP.items() if v == media_req), None
-            )
-            product_option = next(
-                (k for k, v in PRODUCT_MAP.items() if v == product_req), None
-            )
+            # Set output tag TRUE if either request is active
+            if media_trigger or product_trigger:
+                plc.write('L1_Request_Active', 1)
 
             requests = {
                 'L1': {
                     'media':          media_trigger,
                     'product':        product_trigger,
-                    'media_option':   media_option,
-                    'product_option': product_option,
+                    'media_option':   'Option 1',
+                    'product_option': None,
                 }
             }
-
         return jsonify({ 'status': 'success', 'requests': requests })
-
     except Exception as e:
         return jsonify({ 'status': 'error', 'message': str(e) }), 500
 
 
 # ─────────────────────────────────────────
 # WRITE — Reset L1 trigger after acknowledge
+# Also sets L1_Request_Active FALSE
 # ─────────────────────────────────────────
 @app.route('/api/clear-request', methods=['POST'])
 def clear_request():
     data = request.json
-    kind = data.get('kind')   # 'media' or 'product'
+    kind = data.get('kind')
 
     tag_map = {
         'media':   'L1_Media_Trig',
@@ -192,8 +181,140 @@ def clear_request():
     try:
         with LogixDriver(PLC_IP) as plc:
             plc.write(tag_map[kind], 0)
-        return jsonify({ 'status': 'success' })
 
+            # Only set FALSE if no other request is still active
+            media_still   = bool(plc.read('L1_Media_Trig').value)
+            product_still = bool(plc.read('L1_Product_Trig').value)
+            if not media_still and not product_still:
+                plc.write('L1_Request_Active', 0)
+
+        return jsonify({ 'status': 'success' })
+    except Exception as e:
+        return jsonify({ 'status': 'error', 'message': str(e) }), 500
+
+
+# ─────────────────────────────────────────
+# READ — Check stop requests from HMI
+# Also sets L1_Stop_Active TRUE if any stop pending
+# ─────────────────────────────────────────
+@app.route('/api/get-stop-requests', methods=['GET'])
+def get_stop_requests():
+    try:
+        with LogixDriver(PLC_IP) as plc:
+            stop_product = bool(plc.read('Stop_Product_Trig').value)
+            stop_option  = bool(plc.read('Stop_Option_Trig').value)
+
+            # Set output tag TRUE if either stop is active
+            if stop_product or stop_option:
+                plc.write('L1_Stop_Active', 1)
+
+            stop_state = {
+                'stop_product': stop_product,
+                'stop_option':  stop_option,
+            }
+        return jsonify({ 'status': 'success', 'stops': stop_state })
+    except Exception as e:
+        return jsonify({ 'status': 'error', 'message': str(e) }), 500
+
+
+# ─────────────────────────────────────────
+# WRITE — Operator stops operation
+# writes valve TRUE and resets trigger
+# ─────────────────────────────────────────
+# @app.route('/api/stop-operation', methods=['POST'])
+# def stop_operation():
+#     data = request.json
+#     kind = data.get('kind')   # 'product' or 'option'
+
+#     valve_map = {
+#         'product': 'Stop_Product_Valve',
+#         'option':  'Stop_Option1_Valve',
+#     }
+#     trigger_map = {
+#         'product': 'Stop_Product_Trig',
+#         'option':  'Stop_Option_Trig',
+#     }
+
+#     if kind not in valve_map:
+#         return jsonify({ 'status': 'error', 'message': 'Invalid kind' }), 400
+
+#     try:
+#         with LogixDriver(PLC_IP) as plc:
+#             plc.write(valve_map[kind],   1)   # ← stop valve TRUE
+#             plc.write(trigger_map[kind], 0)   # ← reset trigger
+#         return jsonify({ 'status': 'success' })
+#     except Exception as e:
+#         return jsonify({ 'status': 'error', 'message': str(e) }), 500
+
+
+# ─────────────────────────────────────────
+# WRITE — Operator starts operation back
+# writes valve FALSE
+# ─────────────────────────────────────────
+# @app.route('/api/start-operation', methods=['POST'])
+# def start_operation():
+#     data = request.json
+#     kind = data.get('kind')   # 'product' or 'option'
+
+#     valve_map = {
+#         'product': 'Stop_Product_Valve',
+#         'option':  'Stop_Option1_Valve',
+#     }
+
+#     if kind not in valve_map:
+#         return jsonify({ 'status': 'error', 'message': 'Invalid kind' }), 400
+
+#     try:
+#         with LogixDriver(PLC_IP) as plc:
+#             plc.write(valve_map[kind], 0)   # ← start valve FALSE
+#         return jsonify({ 'status': 'success' })
+#     except Exception as e:
+#         return jsonify({ 'status': 'error', 'message': str(e) }), 500
+    
+# ─────────────────────────────────────────
+# READ — Check if stop valves are active
+# (used by Screen 1 to show orange underglow)
+# ─────────────────────────────────────────
+@app.route('/api/get-stop-state', methods=['GET'])
+def get_stop_state():
+    try:
+        with LogixDriver(PLC_IP) as plc:
+            stop_state = {
+                'stop_product': bool(plc.read('Stop_Product_Valve').value),
+                'stop_option':  bool(plc.read('Stop_Option1_Valve').value),
+            }
+        return jsonify({ 'status': 'success', 'stops': stop_state })
+    except Exception as e:
+        return jsonify({ 'status': 'error', 'message': str(e) }), 500
+    
+# ─────────────────────────────────────────
+# WRITE — Reset stop trigger after acknowledge
+# Also sets L1_Stop_Active FALSE if none pending
+# ─────────────────────────────────────────
+@app.route('/api/clear-stop-request', methods=['POST'])
+def clear_stop_request():
+    data = request.json
+    kind = data.get('kind')
+
+    tag_map = {
+        'product': 'Stop_Product_Trig',
+        'option':  'Stop_Option_Trig',
+    }
+
+    if kind not in tag_map:
+        return jsonify({ 'status': 'error', 'message': 'Invalid kind' }), 400
+
+    try:
+        with LogixDriver(PLC_IP) as plc:
+            plc.write(tag_map[kind], 0)
+
+            # Only set FALSE if no other stop is still active
+            product_still = bool(plc.read('Stop_Product_Trig').value)
+            option_still  = bool(plc.read('Stop_Option_Trig').value)
+            if not product_still and not option_still:
+                plc.write('L1_Stop_Active', 0)
+
+        return jsonify({ 'status': 'success' })
     except Exception as e:
         return jsonify({ 'status': 'error', 'message': str(e) }), 500
 

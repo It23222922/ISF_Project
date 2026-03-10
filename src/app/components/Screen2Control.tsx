@@ -10,17 +10,19 @@ import {
 } from './ui/select';
 
 // ─────────────────────────────────────────
-// Popup type
+// Popup types
 // ─────────────────────────────────────────
 interface PopupInfo {
-  line: string;
-  kind: 'media' | 'product';
-  option: string;
+  line:   string;
+  kind:   'media' | 'product';
+  option: string | null;
 }
 
-// ─────────────────────────────────────────
-// Request state type
-// ─────────────────────────────────────────
+interface StopPopupInfo {
+  kind:  'product' | 'option';
+  label: string;
+}
+
 interface LineRequests {
   media:          boolean;
   product:        boolean;
@@ -33,13 +35,15 @@ interface RequestState {
 }
 
 export function Screen2Control() {
-  const [state, setState]           = useState<SystemState>(getSystemState());
-  const [popup, setPopup]           = useState<PopupInfo | null>(null);
-  const [dismissed, setDismissed]   = useState(false);
-  const [requests, setRequests]     = useState<RequestState>({
+  const [state, setState]                 = useState<SystemState>(getSystemState());
+  const [popup, setPopup]                 = useState<PopupInfo | null>(null);
+  const [stopPopup, setStopPopup]         = useState<StopPopupInfo | null>(null);
+  const [dismissed, setDismissed]         = useState(false);
+  const [stopDismissed, setStopDismissed] = useState(false);
+  const [requests, setRequests]           = useState<RequestState>({
     L1: { media: false, product: false, media_option: null, product_option: null }
   });
-  const [flash, setFlash]           = useState(false);
+  const [flash, setFlash]                 = useState(false);
 
   // ─────────────────────────────────────────
   // Flash timer — toggles every 500ms
@@ -54,7 +58,7 @@ export function Screen2Control() {
 
   useEffect(() => {
     // ─────────────────────────────────────────
-    // Poll media and product from localStorage
+    // Poll localStorage
     // ─────────────────────────────────────────
     const handleStorageChange = () => {
       setState(getSystemState());
@@ -62,7 +66,7 @@ export function Screen2Control() {
     window.addEventListener('storage', handleStorageChange);
 
     // ─────────────────────────────────────────
-    // Poll QC values from PLC every 2 seconds
+    // Poll QC every 2 seconds
     // ─────────────────────────────────────────
     const fetchQC = async () => {
       try {
@@ -86,7 +90,7 @@ export function Screen2Control() {
           })
         }
       } catch (error) {
-        console.error('❌ Could not read QC from PLC:', error)
+        console.error('❌ Could not read QC:', error)
       }
     }
     fetchQC()
@@ -99,53 +103,79 @@ export function Screen2Control() {
       try {
         const res  = await fetch('http://localhost:5000/api/get-requests')
         const data = await res.json()
-
         if (data.status === 'success') {
           setRequests(data.requests)
-
           const l1 = data.requests['L1']
-
           if (l1.media) {
             setPopup(prev => {
               if (prev || dismissed) return prev
-              return {
-                line:   'L1',
-                kind:   'media',
-                option: l1.media_option ?? 'Unknown'
-              }
+              return { line: 'L1', kind: 'media', option: 'Option 1' }
             })
             return
           }
-
           if (l1.product) {
             setPopup(prev => {
               if (prev || dismissed) return prev
-              return {
-                line:   'L1',
-                kind:   'product',
-                option: l1.product_option ?? 'Unknown'
-              }
+              return { line: 'L1', kind: 'product', option: null }
             })
             return
           }
         }
       } catch (error) {
-        console.error('❌ Could not read requests from PLC:', error)
+        console.error('❌ Could not read requests:', error)
       }
     }
     fetchRequests()
     const requestInterval = setInterval(fetchRequests, 1000)
 
+    // ─────────────────────────────────────────
+    // Poll Stop requests every second
+    // ─────────────────────────────────────────
+    const fetchStopRequests = async () => {
+      try {
+        const res  = await fetch('http://localhost:5000/api/get-stop-requests')
+        const data = await res.json()
+        if (data.status === 'success') {
+          const { stop_product, stop_option } = data.stops
+          if (stop_product) {
+            setStopPopup(prev => {
+              if (prev || stopDismissed) return prev
+              return { kind: 'product', label: 'Product' }
+            })
+          }
+          if (stop_option) {
+            setStopPopup(prev => {
+              if (prev || stopDismissed) return prev
+              return { kind: 'option', label: 'Media Option 1' }
+            })
+          }
+        }
+      } catch (error) {
+        console.error('❌ Could not read stop requests:', error)
+      }
+    }
+    fetchStopRequests()
+    const stopInterval = setInterval(fetchStopRequests, 1000)
+
     return () => {
       window.removeEventListener('storage', handleStorageChange)
       clearInterval(qcInterval)
       clearInterval(requestInterval)
+      clearInterval(stopInterval)
     };
-  }, [dismissed]);
+  }, [dismissed, stopDismissed]);
 
 
   // ─────────────────────────────────────────
-  // Check if a line has any active request
+  // Orange underglow — driven by stopPopup
+  // ─────────────────────────────────────────
+  const hasStopRequest = (id: string) => {
+    if (id === 'L1') return stopPopup !== null
+    return false
+  }
+
+  // ─────────────────────────────────────────
+  // Red underglow — active request
   // ─────────────────────────────────────────
   const hasRequest = (id: string) => {
     if (id === 'L1') return requests.L1.media || requests.L1.product
@@ -154,51 +184,62 @@ export function Screen2Control() {
 
 
   // ─────────────────────────────────────────
-  // Dismiss popup and reset PLC trigger tag
+  // Dismiss request popup
   // ─────────────────────────────────────────
   const handleDismiss = async () => {
     if (!popup) return
-
     setDismissed(true)
-
     try {
       await fetch('http://localhost:5000/api/clear-request', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: popup.kind })
+        body:    JSON.stringify({ kind: popup.kind })
       })
     } catch (error) {
-      console.error('❌ Could not clear request tag:', error)
+      console.error('❌ Could not clear request:', error)
     }
-
     setPopup(null)
-
-    setTimeout(() => {
-      setDismissed(false)
-    }, 3000)
+    setTimeout(() => setDismissed(false), 3000)
   }
 
 
   // ─────────────────────────────────────────
-  // Write media and product only (no QC)
+  // Acknowledge stop popup
+  // clears popup → orange underglow turns off
+  // ─────────────────────────────────────────
+const handleStopAcknowledge = async () => {
+    if (!stopPopup) return
+    setStopDismissed(true)
+    try {
+        await fetch('http://localhost:5000/api/clear-stop-request', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ kind: stopPopup.kind })
+        })
+    } catch (error) {
+        console.error('❌ Could not clear stop request:', error)
+    }
+    setStopPopup(null)
+    setTimeout(() => setStopDismissed(false), 3000)
+}
+
+
+  // ─────────────────────────────────────────
+  // Write media and product to PLC
   // ─────────────────────────────────────────
   const updateLine = async (line: keyof SystemState, field: 'media' | 'product', value: string) => {
     const newState = {
       ...state,
-      [line]: {
-        ...state[line],
-        [field]: value,
-      },
+      [line]: { ...state[line], [field]: value },
     };
     setState(newState);
     setSystemState(newState);
-
     try {
       const updatedLine = newState[line];
       const response = await fetch('http://localhost:5000/api/set-line', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body:    JSON.stringify({
           line:    line,
           media:   updatedLine.media,
           product: updatedLine.product,
@@ -224,23 +265,23 @@ export function Screen2Control() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-800 p-6">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen bg-slate-800 p-8">
+      <div className="max-w-7xl mx-auto">
 
         {/* Header */}
         <div className="bg-gradient-to-r text-center from-green-600 to-green-700 text-white px-5 py-4 mb-5 rounded-lg shadow-xl">
-          <h1 className="text-2xl font-bold tracking-wide">Control Panel</h1>
+          <h1 className="text-3xl font-bold tracking-wide">Control Panel</h1>
         </div>
 
         {/* Main content */}
         <div className="bg-slate-700 border-4 border-green-500 rounded-lg shadow-2xl overflow-hidden">
 
-          {/* Column Headers */}
-          <div className="grid grid-cols-[100px_1fr_1fr_100px] gap-3 px-4 py-4 border-b-4 border-green-500 bg-slate-900">
+          {/* Column Headers — no Start/Stop column */}
+          <div className="grid grid-cols-[120px_1fr_1fr_120px] gap-4 px-6 py-5 border-b-4 border-green-500 bg-slate-900">
             <div></div>
-            <div className="text-xl font-bold text-center text-yellow-400">Media</div>
-            <div className="text-xl font-bold text-center text-yellow-400">Products</div>
-            <div className="text-xl font-bold text-center text-yellow-400">QC</div>
+            <div className="text-2xl font-bold text-center text-yellow-400">Media</div>
+            <div className="text-2xl font-bold text-center text-yellow-400">Products</div>
+            <div className="text-2xl font-bold text-center text-yellow-400">QC</div>
           </div>
 
           {/* Lines */}
@@ -248,56 +289,67 @@ export function Screen2Control() {
             <div
               key={line.id}
               className={`
-                grid grid-cols-[100px_1fr_1fr_100px] gap-3 px-4 py-5
+                grid grid-cols-[120px_1fr_1fr_120px] gap-4 px-6 py-7
                 transition-all duration-300
                 ${index < lines.length - 1 ? 'border-b-2 border-slate-600' : ''}
-                ${hasRequest(line.id)
+                ${hasStopRequest(line.id)
                   ? flash
-                    ? 'shadow-[0_0_30px_8px_rgba(239,68,68,0.8)] bg-red-950/40'
-                    : 'shadow-[0_0_10px_2px_rgba(239,68,68,0.2)] bg-red-950/10'
-                  : ''
+                    ? 'shadow-[0_0_30px_8px_rgba(249,115,22,0.8)] bg-orange-950/40'
+                    : 'shadow-[0_0_10px_2px_rgba(249,115,22,0.2)] bg-orange-950/10'
+                  : hasRequest(line.id)
+                    ? flash
+                      ? 'shadow-[0_0_30px_8px_rgba(239,68,68,0.8)] bg-red-950/40'
+                      : 'shadow-[0_0_10px_2px_rgba(239,68,68,0.2)] bg-red-950/10'
+                    : ''
                 }
               `}
             >
+              {/* Line ID */}
               <div className="flex items-center">
                 <span className={`
-                  text-2xl font-bold transition-all duration-300
-                  ${hasRequest(line.id)
-                    ? flash ? 'text-red-400' : 'text-green-400'
-                    : 'text-green-400'
+                  text-3xl font-bold transition-all duration-300
+                  ${hasStopRequest(line.id)
+                    ? flash ? 'text-orange-400' : 'text-green-400'
+                    : hasRequest(line.id)
+                      ? flash ? 'text-red-400' : 'text-green-400'
+                      : 'text-green-400'
                   }
                 `}>
                   {line.id}
                 </span>
               </div>
+
+              {/* Media dropdown */}
               <div className="flex items-center">
                 <Select
                   value={line.data.media}
                   onValueChange={(value) => updateLine(line.id, 'media', value)}
                 >
-                  <SelectTrigger className="w-full h-12 text-lg border-2 border-blue-400 bg-slate-900 text-white hover:bg-slate-800 transition-colors">
+                  <SelectTrigger className="w-full h-14 text-xl border-2 border-blue-400 bg-slate-900 text-white hover:bg-slate-800 transition-colors">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {MEDIA_OPTIONS.map((option) => (
-                      <SelectItem key={option} value={option} className="text-lg">
+                      <SelectItem key={option} value={option} className="text-xl">
                         {option}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Product dropdown */}
               <div className="flex items-center">
                 <Select
                   value={line.data.product}
                   onValueChange={(value) => updateLine(line.id, 'product', value)}
                 >
-                  <SelectTrigger className="w-full h-12 text-lg border-2 border-blue-400 bg-slate-900 text-white hover:bg-slate-800 transition-colors">
+                  <SelectTrigger className="w-full h-14 text-xl border-2 border-blue-400 bg-slate-900 text-white hover:bg-slate-800 transition-colors">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {PRODUCT_OPTIONS.map((option) => (
-                      <SelectItem key={option} value={option} className="text-lg">
+                      <SelectItem key={option} value={option} className="text-xl">
                         {option}
                       </SelectItem>
                     ))}
@@ -307,56 +359,87 @@ export function Screen2Control() {
 
               {/* QC — read only from PLC */}
               <div className="flex items-center justify-center">
-                <span className={`text-xl font-bold ${line.data.qc === 'Yes' ? 'text-green-400' : 'text-red-400'}`}>
+                <span className={`text-2xl font-bold ${line.data.qc === 'Yes' ? 'text-green-400' : 'text-red-400'}`}>
                   {line.data.qc}
                 </span>
               </div>
+
             </div>
           ))}
         </div>
       </div>
 
-      {/* ── POPUP ── */}
+
+      {/* ── REQUEST POPUP ── */}
       {popup && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
           <div className="bg-slate-800 border-4 border-yellow-400 rounded-2xl shadow-2xl p-8 max-w-sm w-full mx-4">
-
             <div className="text-center text-6xl mb-4">🔔</div>
-
             <h2 className="text-2xl font-extrabold text-yellow-400 text-center mb-4">
               Request Received
             </h2>
-
             <div className="flex justify-center mb-3">
               <span className="bg-green-600 text-white text-2xl font-extrabold px-6 py-2 rounded-xl">
                 {popup.line}
               </span>
             </div>
-
-            <p className="text-slate-300 text-center text-lg mb-3">
+            <p className="text-slate-300 text-center text-lg mb-4">
               is requesting a{' '}
               <span className="text-white font-bold">
                 {popup.kind === 'media' ? '🎛 Media' : '📦 Product'}
               </span>{' '}
               change
             </p>
-
-            <div className="bg-slate-900 border-2 border-yellow-400 rounded-xl px-4 py-4 mb-6 text-center">
-              <p className="text-slate-400 text-xs uppercase tracking-widest mb-1">
-                Requested Option
-              </p>
-              <p className="text-yellow-400 text-3xl font-extrabold">
-                {popup.option}
-              </p>
-            </div>
-
+            {popup.kind === 'media' && (
+              <div className="bg-slate-900 border-2 border-yellow-400 rounded-xl px-4 py-4 mb-6 text-center">
+                <p className="text-slate-400 text-xs uppercase tracking-widest mb-1">Requested Option</p>
+                <p className="text-yellow-400 text-3xl font-extrabold">Option 1</p>
+              </div>
+            )}
+            {popup.kind === 'product' && (
+              <div className="bg-slate-900 border-2 border-blue-400 rounded-xl px-4 py-4 mb-6 text-center">
+                <p className="text-slate-400 text-xs uppercase tracking-widest mb-1">Action Required</p>
+                <p className="text-blue-400 text-xl font-bold">Please select a product for {popup.line}</p>
+              </div>
+            )}
             <button
               onClick={handleDismiss}
               className="w-full bg-yellow-400 hover:bg-yellow-300 text-slate-900 font-extrabold text-xl py-3 rounded-xl transition-colors"
             >
               Acknowledge
             </button>
+          </div>
+        </div>
+      )}
 
+
+      {/* ── STOP POPUP ── */}
+      {stopPopup && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+          <div className="bg-slate-800 border-4 border-orange-400 rounded-2xl shadow-2xl p-8 max-w-sm w-full mx-4">
+            <div className="text-center text-6xl mb-4">🛑</div>
+            <h2 className="text-2xl font-extrabold text-orange-400 text-center mb-4">
+              Stop Request
+            </h2>
+            <div className="flex justify-center mb-3">
+              <span className="bg-orange-600 text-white text-2xl font-extrabold px-6 py-2 rounded-xl">
+                L1
+              </span>
+            </div>
+            <div className="bg-slate-900 border-2 border-orange-400 rounded-xl px-4 py-4 mb-6 text-center">
+              <p className="text-slate-400 text-xs uppercase tracking-widest mb-1">
+                Stop Requested For
+              </p>
+              <p className="text-orange-400 text-2xl font-extrabold">
+                {stopPopup.label}
+              </p>
+            </div>
+            <button
+              onClick={handleStopAcknowledge}
+              className="w-full bg-yellow-400 hover:bg-yellow-300 text-slate-900 font-extrabold text-xl py-3 rounded-xl transition-colors"
+            >
+              Acknowledge
+            </button>
           </div>
         </div>
       )}

@@ -16,12 +16,24 @@ interface RequestState {
   L1: LineRequests;
 }
 
+// ─────────────────────────────────────────
+// Stop state type
+// ─────────────────────────────────────────
+interface StopState {
+  stop_product: boolean;
+  stop_option:  boolean;
+}
+
 export function Screen1Display() {
-  const [state, setState] = useState<SystemState>(getSystemState());
+  const [state, setState]     = useState<SystemState>(getSystemState());
   const [requests, setRequests] = useState<RequestState>({
     L1: { media: false, product: false, media_option: null, product_option: null }
   });
-  const [flash, setFlash] = useState(false);
+  const [stops, setStops]     = useState<StopState>({
+    stop_product: false,
+    stop_option:  false,
+  });
+  const [flash, setFlash]     = useState(false);
 
   // ─────────────────────────────────────────
   // Flash timer — toggles every 500ms
@@ -84,7 +96,7 @@ export function Screen1Display() {
     const qcInterval = setInterval(fetchQC, 2000)
 
     // ─────────────────────────────────────────
-    // Poll HMI requests to show underglow
+    // Poll HMI requests — red underglow
     // ─────────────────────────────────────────
     const fetchRequests = async () => {
       try {
@@ -100,11 +112,29 @@ export function Screen1Display() {
     fetchRequests()
     const requestInterval = setInterval(fetchRequests, 1000)
 
+    // ─────────────────────────────────────────
+    // Poll stop requests — orange underglow
+    // ─────────────────────────────────────────
+    const fetchStops = async () => {
+        try {
+        const res  = await fetch('http://localhost:5000/api/get-stop-requests')
+        const data = await res.json()
+        if (data.status === 'success') {
+          setStops(data.stops)
+        }
+      } catch (error) {
+        console.error('❌ Could not read stop requests:', error)
+      }
+    }
+    fetchStops()
+    const stopInterval = setInterval(fetchStops, 1000)
+
     return () => {
       window.removeEventListener('storage', handleStorageChange)
       clearInterval(storageInterval)
       clearInterval(qcInterval)
       clearInterval(requestInterval)
+      clearInterval(stopInterval)
     }
   }, []);
 
@@ -115,10 +145,16 @@ export function Screen1Display() {
     { id: 'L4', data: state.L4 },
   ];
 
-  // Check if a line has any active request
+  // Red underglow — active request
   const hasRequest = (id: string) => {
     if (id === 'L1') return requests.L1.media || requests.L1.product
-    return false  // L2-L4 not yet configured
+    return false
+  }
+
+  // Orange underglow — stop active
+  const hasStopped = (id: string) => {
+    if (id === 'L1') return stops.stop_product || stops.stop_option
+    return false
   }
 
   return (
@@ -147,11 +183,15 @@ export function Screen1Display() {
                 grid grid-cols-[180px_1fr_1fr_180px] gap-4 px-6 py-8
                 transition-all duration-300
                 ${index < lines.length - 1 ? 'border-b-2 border-slate-600' : ''}
-                ${hasRequest(line.id)
+                ${hasStopped(line.id)
                   ? flash
-                    ? 'shadow-[0_0_30px_8px_rgba(239,68,68,0.8)] bg-red-950/40'   // ← flash ON
-                    : 'shadow-[0_0_10px_2px_rgba(239,68,68,0.2)] bg-red-950/10'   // ← flash OFF
-                  : ''
+                    ? 'shadow-[0_0_30px_8px_rgba(249,115,22,0.8)] bg-orange-950/40'  // orange flash ON
+                    : 'shadow-[0_0_10px_2px_rgba(249,115,22,0.2)] bg-orange-950/10'  // orange flash OFF
+                  : hasRequest(line.id)
+                    ? flash
+                      ? 'shadow-[0_0_30px_8px_rgba(239,68,68,0.8)] bg-red-950/40'   // red flash ON
+                      : 'shadow-[0_0_10px_2px_rgba(239,68,68,0.2)] bg-red-950/10'   // red flash OFF
+                    : ''
                 }
               `}
             >
@@ -160,11 +200,15 @@ export function Screen1Display() {
                   inline-flex min-w-28 justify-center rounded-xl border-2 px-4 py-3
                   text-5xl font-extrabold tracking-wider shadow-xl ring-2
                   transition-all duration-300
-                  ${hasRequest(line.id)
+                  ${hasStopped(line.id)
                     ? flash
-                      ? 'border-red-400 bg-red-600 text-white ring-red-400/60'       // ← flash ON
-                      : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'  // ← flash OFF
-                    : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'
+                      ? 'border-orange-400 bg-orange-600 text-white ring-orange-400/60'           // orange flash ON
+                      : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'  // orange flash OFF
+                    : hasRequest(line.id)
+                      ? flash
+                        ? 'border-red-400 bg-red-600 text-white ring-red-400/60'                  // red flash ON
+                        : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'  // red flash OFF
+                      : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'
                   }
                 `}>
                   {line.id}

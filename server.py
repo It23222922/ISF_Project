@@ -129,10 +129,36 @@ def get_qc():
 
 
 # ─────────────────────────────────────────
-# READ — L1 requests
-# Media:   always Option 1 (no user choice)
-# Product: just a request flag (no option)
+# READ — Get current media and product from PLC
+# (used by Screen 1 to display current values)
 # ─────────────────────────────────────────
+@app.route('/api/get-line-state', methods=['GET'])
+def get_line_state():
+    try:
+        with LogixDriver(PLC_IP) as plc:
+            line_state = {
+                'L1': {
+                    'media':   plc.read('L1_Media').value,
+                    'product': plc.read('L1_Product').value,
+                },
+                'L2': {
+                    'media':   plc.read('L2_Media').value,
+                    'product': plc.read('L2_Product').value,
+                },
+                'L3': {
+                    'media':   plc.read('L3_Media').value,
+                    'product': plc.read('L3_Product').value,
+                },
+                'L4': {
+                    'media':   plc.read('L4_Media').value,
+                    'product': plc.read('L4_Product').value,
+                },
+            }
+        return jsonify({ 'status': 'success', 'lines': line_state })
+    except Exception as e:
+        return jsonify({ 'status': 'error', 'message': str(e) }), 500
+
+
 # ─────────────────────────────────────────
 # READ — L1 requests
 # Also sets L1_Request_Active TRUE if any request pending
@@ -218,14 +244,12 @@ def get_stop_requests():
 
 
 # ─────────────────────────────────────────
-# WRITE — Operator stops operation
-# writes valve TRUE and resets trigger
+# WRITE — Operator stops operation (commented out — not in use)
 # ─────────────────────────────────────────
 # @app.route('/api/stop-operation', methods=['POST'])
 # def stop_operation():
 #     data = request.json
-#     kind = data.get('kind')   # 'product' or 'option'
-
+#     kind = data.get('kind')
 #     valve_map = {
 #         'product': 'Stop_Product_Valve',
 #         'option':  'Stop_Option1_Valve',
@@ -234,43 +258,38 @@ def get_stop_requests():
 #         'product': 'Stop_Product_Trig',
 #         'option':  'Stop_Option_Trig',
 #     }
-
 #     if kind not in valve_map:
 #         return jsonify({ 'status': 'error', 'message': 'Invalid kind' }), 400
-
 #     try:
 #         with LogixDriver(PLC_IP) as plc:
-#             plc.write(valve_map[kind],   1)   # ← stop valve TRUE
-#             plc.write(trigger_map[kind], 0)   # ← reset trigger
+#             plc.write(valve_map[kind],   1)
+#             plc.write(trigger_map[kind], 0)
 #         return jsonify({ 'status': 'success' })
 #     except Exception as e:
 #         return jsonify({ 'status': 'error', 'message': str(e) }), 500
 
 
 # ─────────────────────────────────────────
-# WRITE — Operator starts operation back
-# writes valve FALSE
+# WRITE — Operator starts operation back (commented out — not in use)
 # ─────────────────────────────────────────
 # @app.route('/api/start-operation', methods=['POST'])
 # def start_operation():
 #     data = request.json
-#     kind = data.get('kind')   # 'product' or 'option'
-
+#     kind = data.get('kind')
 #     valve_map = {
 #         'product': 'Stop_Product_Valve',
 #         'option':  'Stop_Option1_Valve',
 #     }
-
 #     if kind not in valve_map:
 #         return jsonify({ 'status': 'error', 'message': 'Invalid kind' }), 400
-
 #     try:
 #         with LogixDriver(PLC_IP) as plc:
-#             plc.write(valve_map[kind], 0)   # ← start valve FALSE
+#             plc.write(valve_map[kind], 0)
 #         return jsonify({ 'status': 'success' })
 #     except Exception as e:
 #         return jsonify({ 'status': 'error', 'message': str(e) }), 500
-    
+
+
 # ─────────────────────────────────────────
 # READ — Check if stop valves are active
 # (used by Screen 1 to show orange underglow)
@@ -286,7 +305,8 @@ def get_stop_state():
         return jsonify({ 'status': 'success', 'stops': stop_state })
     except Exception as e:
         return jsonify({ 'status': 'error', 'message': str(e) }), 500
-    
+
+
 # ─────────────────────────────────────────
 # WRITE — Reset stop trigger after acknowledge
 # Also sets L1_Stop_Active FALSE if none pending
@@ -320,4 +340,4 @@ def clear_stop_request():
 
 
 if __name__ == '__main__':
-    app.run(port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)  # ← allows network access

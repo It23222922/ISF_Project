@@ -3,6 +3,27 @@ import { SystemState } from '../types';
 import { getSystemState } from '../utils/storage';
 
 // ─────────────────────────────────────────
+// API base URL — from .env
+// ─────────────────────────────────────────
+const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+
+// ─────────────────────────────────────────
+// Reverse maps — PLC int → option string
+// ─────────────────────────────────────────
+const MEDIA_REVERSE: Record<number, string> = {
+  1: 'Option 1', 2: 'Option 2', 3: 'Option 3',
+  4: 'Option 4', 5: 'Option 5',
+}
+
+const PRODUCT_REVERSE: Record<number, string> = {
+  1:  'Option 1',  2:  'Option 2',  3:  'Option 3',
+  4:  'Option 4',  5:  'Option 5',  6:  'Option 6',
+  7:  'Option 7',  8:  'Option 8',  9:  'Option 9',
+  10: 'Option 10', 11: 'Option 11', 12: 'Option 12',
+  13: 'Option 13', 14: 'Option 14', 15: 'Option 15',
+}
+
+// ─────────────────────────────────────────
 // Request state type
 // ─────────────────────────────────────────
 interface LineRequests {
@@ -25,15 +46,15 @@ interface StopState {
 }
 
 export function Screen1Display() {
-  const [state, setState]     = useState<SystemState>(getSystemState());
+  const [state, setState]       = useState<SystemState>(getSystemState());
   const [requests, setRequests] = useState<RequestState>({
     L1: { media: false, product: false, media_option: null, product_option: null }
   });
-  const [stops, setStops]     = useState<StopState>({
+  const [stops, setStops]       = useState<StopState>({
     stop_product: false,
     stop_option:  false,
   });
-  const [flash, setFlash]     = useState(false);
+  const [flash, setFlash]       = useState(false);
 
   // ─────────────────────────────────────────
   // Flash timer — toggles every 500ms
@@ -48,28 +69,47 @@ export function Screen1Display() {
 
   useEffect(() => {
     // ─────────────────────────────────────────
-    // Poll media and product from localStorage
-    // but NEVER overwrite qc from storage
+    // Poll media + product from PLC every second
+    // replaces localStorage polling
     // ─────────────────────────────────────────
-    const handleStorageChange = () => {
-      const stored = getSystemState()
-      setState(prev => ({
-        ...prev,
-        L1: { ...stored.L1, qc: prev.L1.qc },
-        L2: { ...stored.L2, qc: prev.L2.qc },
-        L3: { ...stored.L3, qc: prev.L3.qc },
-        L4: { ...stored.L4, qc: prev.L4.qc },
-      }))
+    const fetchLineState = async () => {
+      try {
+        const res  = await fetch(`${API}/api/get-line-state`)
+        const data = await res.json()
+        if (data.status === 'success') {
+          setState(prev => ({
+            ...prev,
+            L1: { ...prev.L1,
+              media:   MEDIA_REVERSE[data.lines.L1.media]     ?? prev.L1.media,
+              product: PRODUCT_REVERSE[data.lines.L1.product] ?? prev.L1.product,
+            },
+            L2: { ...prev.L2,
+              media:   MEDIA_REVERSE[data.lines.L2.media]     ?? prev.L2.media,
+              product: PRODUCT_REVERSE[data.lines.L2.product] ?? prev.L2.product,
+            },
+            L3: { ...prev.L3,
+              media:   MEDIA_REVERSE[data.lines.L3.media]     ?? prev.L3.media,
+              product: PRODUCT_REVERSE[data.lines.L3.product] ?? prev.L3.product,
+            },
+            L4: { ...prev.L4,
+              media:   MEDIA_REVERSE[data.lines.L4.media]     ?? prev.L4.media,
+              product: PRODUCT_REVERSE[data.lines.L4.product] ?? prev.L4.product,
+            },
+          }))
+        }
+      } catch (error) {
+        console.error('❌ Could not read line state from PLC:', error)
+      }
     }
-    window.addEventListener('storage', handleStorageChange)
-    const storageInterval = setInterval(handleStorageChange, 500)
+    fetchLineState()
+    const lineInterval = setInterval(fetchLineState, 1000)
 
     // ─────────────────────────────────────────
     // Poll QC from PLC every 2 seconds
     // ─────────────────────────────────────────
     const fetchQC = async () => {
       try {
-        const res  = await fetch('http://localhost:5000/api/get-qc')
+        const res  = await fetch(`${API}/api/get-qc`)
         const data = await res.json()
         if (data.status === 'success') {
           setState(prev => {
@@ -100,7 +140,7 @@ export function Screen1Display() {
     // ─────────────────────────────────────────
     const fetchRequests = async () => {
       try {
-        const res  = await fetch('http://localhost:5000/api/get-requests')
+        const res  = await fetch(`${API}/api/get-requests`)
         const data = await res.json()
         if (data.status === 'success') {
           setRequests(data.requests)
@@ -116,8 +156,8 @@ export function Screen1Display() {
     // Poll stop requests — orange underglow
     // ─────────────────────────────────────────
     const fetchStops = async () => {
-        try {
-        const res  = await fetch('http://localhost:5000/api/get-stop-requests')
+      try {
+        const res  = await fetch(`${API}/api/get-stop-requests`)
         const data = await res.json()
         if (data.status === 'success') {
           setStops(data.stops)
@@ -130,8 +170,7 @@ export function Screen1Display() {
     const stopInterval = setInterval(fetchStops, 1000)
 
     return () => {
-      window.removeEventListener('storage', handleStorageChange)
-      clearInterval(storageInterval)
+      clearInterval(lineInterval)
       clearInterval(qcInterval)
       clearInterval(requestInterval)
       clearInterval(stopInterval)
@@ -145,13 +184,11 @@ export function Screen1Display() {
     { id: 'L4', data: state.L4 },
   ];
 
-  // Red underglow — active request
   const hasRequest = (id: string) => {
     if (id === 'L1') return requests.L1.media || requests.L1.product
     return false
   }
 
-  // Orange underglow — stop active
   const hasStopped = (id: string) => {
     if (id === 'L1') return stops.stop_product || stops.stop_option
     return false
@@ -185,12 +222,12 @@ export function Screen1Display() {
                 ${index < lines.length - 1 ? 'border-b-2 border-slate-600' : ''}
                 ${hasStopped(line.id)
                   ? flash
-                    ? 'shadow-[0_0_30px_8px_rgba(249,115,22,0.8)] bg-orange-950/40'  // orange flash ON
-                    : 'shadow-[0_0_10px_2px_rgba(249,115,22,0.2)] bg-orange-950/10'  // orange flash OFF
+                    ? 'shadow-[0_0_30px_8px_rgba(249,115,22,0.8)] bg-orange-950/40'
+                    : 'shadow-[0_0_10px_2px_rgba(249,115,22,0.2)] bg-orange-950/10'
                   : hasRequest(line.id)
                     ? flash
-                      ? 'shadow-[0_0_30px_8px_rgba(239,68,68,0.8)] bg-red-950/40'   // red flash ON
-                      : 'shadow-[0_0_10px_2px_rgba(239,68,68,0.2)] bg-red-950/10'   // red flash OFF
+                      ? 'shadow-[0_0_30px_8px_rgba(239,68,68,0.8)] bg-red-950/40'
+                      : 'shadow-[0_0_10px_2px_rgba(239,68,68,0.2)] bg-red-950/10'
                     : ''
                 }
               `}
@@ -202,12 +239,12 @@ export function Screen1Display() {
                   transition-all duration-300
                   ${hasStopped(line.id)
                     ? flash
-                      ? 'border-orange-400 bg-orange-600 text-white ring-orange-400/60'           // orange flash ON
-                      : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'  // orange flash OFF
+                      ? 'border-orange-400 bg-orange-600 text-white ring-orange-400/60'
+                      : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'
                     : hasRequest(line.id)
                       ? flash
-                        ? 'border-red-400 bg-red-600 text-white ring-red-400/60'                  // red flash ON
-                        : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'  // red flash OFF
+                        ? 'border-red-400 bg-red-600 text-white ring-red-400/60'
+                        : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'
                       : 'border-primary-foreground/40 bg-primary text-primary-foreground ring-ring/60'
                   }
                 `}>

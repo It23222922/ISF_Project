@@ -10,6 +10,11 @@ import {
 } from './ui/select';
 
 // ─────────────────────────────────────────
+// API base URL — from .env
+// ─────────────────────────────────────────
+const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+
+// ─────────────────────────────────────────
 // Popup types
 // ─────────────────────────────────────────
 interface PopupInfo {
@@ -70,7 +75,7 @@ export function Screen2Control() {
     // ─────────────────────────────────────────
     const fetchQC = async () => {
       try {
-        const res  = await fetch('http://localhost:5000/api/get-qc')
+        const res  = await fetch(`${API}/api/get-qc`)
         const data = await res.json()
         if (data.status === 'success') {
           setState(prev => {
@@ -101,7 +106,7 @@ export function Screen2Control() {
     // ─────────────────────────────────────────
     const fetchRequests = async () => {
       try {
-        const res  = await fetch('http://localhost:5000/api/get-requests')
+        const res  = await fetch(`${API}/api/get-requests`)
         const data = await res.json()
         if (data.status === 'success') {
           setRequests(data.requests)
@@ -133,7 +138,7 @@ export function Screen2Control() {
     // ─────────────────────────────────────────
     const fetchStopRequests = async () => {
       try {
-        const res  = await fetch('http://localhost:5000/api/get-stop-requests')
+        const res  = await fetch(`${API}/api/get-stop-requests`)
         const data = await res.json()
         if (data.status === 'success') {
           const { stop_product, stop_option } = data.stops
@@ -190,7 +195,7 @@ export function Screen2Control() {
     if (!popup) return
     setDismissed(true)
     try {
-      await fetch('http://localhost:5000/api/clear-request', {
+      await fetch(`${API}/api/clear-request`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ kind: popup.kind })
@@ -207,21 +212,21 @@ export function Screen2Control() {
   // Acknowledge stop popup
   // clears popup → orange underglow turns off
   // ─────────────────────────────────────────
-const handleStopAcknowledge = async () => {
+  const handleStopAcknowledge = async () => {
     if (!stopPopup) return
     setStopDismissed(true)
     try {
-        await fetch('http://localhost:5000/api/clear-stop-request', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ kind: stopPopup.kind })
-        })
+      await fetch(`${API}/api/clear-stop-request`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ kind: stopPopup.kind })
+      })
     } catch (error) {
-        console.error('❌ Could not clear stop request:', error)
+      console.error('❌ Could not clear stop request:', error)
     }
     setStopPopup(null)
     setTimeout(() => setStopDismissed(false), 3000)
-}
+  }
 
 
   // ─────────────────────────────────────────
@@ -236,7 +241,7 @@ const handleStopAcknowledge = async () => {
     setSystemState(newState);
     try {
       const updatedLine = newState[line];
-      const response = await fetch('http://localhost:5000/api/set-line', {
+      const response = await fetch(`${API}/api/set-line`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -276,7 +281,7 @@ const handleStopAcknowledge = async () => {
         {/* Main content */}
         <div className="bg-slate-700 border-4 border-green-500 rounded-lg shadow-2xl overflow-hidden">
 
-          {/* Column Headers — no Start/Stop column */}
+          {/* Column Headers */}
           <div className="grid grid-cols-[120px_1fr_1fr_120px] gap-4 px-6 py-5 border-b-4 border-green-500 bg-slate-900">
             <div></div>
             <div className="text-2xl font-bold text-center text-yellow-400">Media</div>

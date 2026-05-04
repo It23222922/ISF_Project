@@ -15,6 +15,22 @@ import {
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 // ─────────────────────────────────────────
+// Reverse maps — PLC int → option string
+// ─────────────────────────────────────────
+const MEDIA_REVERSE: Record<number, string> = {
+  1: 'Option 1', 2: 'Option 2', 3: 'Option 3',
+  4: 'Option 4', 5: 'Option 5',
+}
+
+const PRODUCT_REVERSE: Record<number, string> = {
+  1:  'Option 1',  2:  'Option 2',  3:  'Option 3',
+  4:  'Option 4',  5:  'Option 5',  6:  'Option 6',
+  7:  'Option 7',  8:  'Option 8',  9:  'Option 9',
+  10: 'Option 10', 11: 'Option 11', 12: 'Option 12',
+  13: 'Option 13', 14: 'Option 14', 15: 'Option 15',
+}
+
+// ─────────────────────────────────────────
 // Popup types
 // ─────────────────────────────────────────
 interface PopupInfo {
@@ -24,7 +40,8 @@ interface PopupInfo {
 }
 
 interface StopPopupInfo {
-  kind:  'product' | 'option';
+  line:  string;
+  kind:  'product' | 'media';
   label: string;
 }
 
@@ -35,8 +52,23 @@ interface LineRequests {
   product_option: string | null;
 }
 
+interface LineStops {
+  stop_product: boolean;
+  stop_media:   boolean;
+}
+
 interface RequestState {
   L1: LineRequests;
+  L2: LineRequests;
+  L3: LineRequests;
+  L4: LineRequests;
+}
+
+interface StopState {
+  L1: LineStops;
+  L2: LineStops;
+  L3: LineStops;
+  L4: LineStops;
 }
 
 export function Screen2Control() {
@@ -46,9 +78,19 @@ export function Screen2Control() {
   const [dismissed, setDismissed]         = useState(false);
   const [stopDismissed, setStopDismissed] = useState(false);
   const [requests, setRequests]           = useState<RequestState>({
-    L1: { media: false, product: false, media_option: null, product_option: null }
+    L1: { media: false, product: false, media_option: null, product_option: null },
+    L2: { media: false, product: false, media_option: null, product_option: null },
+    L3: { media: false, product: false, media_option: null, product_option: null },
+    L4: { media: false, product: false, media_option: null, product_option: null },
+  });
+  const [stops, setStops]                 = useState<StopState>({
+    L1: { stop_product: false, stop_media: false },
+    L2: { stop_product: false, stop_media: false },
+    L3: { stop_product: false, stop_media: false },
+    L4: { stop_product: false, stop_media: false },
   });
   const [flash, setFlash]                 = useState(false);
+  const [loaded, setLoaded]               = useState(false);  // ← prevents flicker before PLC load
 
   // ─────────────────────────────────────────
   // Flash timer — toggles every 500ms
@@ -63,12 +105,41 @@ export function Screen2Control() {
 
   useEffect(() => {
     // ─────────────────────────────────────────
-    // Poll localStorage
+    // Load initial state from PLC on startup
+    // replaces localStorage as source of truth
     // ─────────────────────────────────────────
-    const handleStorageChange = () => {
-      setState(getSystemState());
-    };
-    window.addEventListener('storage', handleStorageChange);
+    const fetchInitialState = async () => {
+      try {
+        const res  = await fetch(`${API}/api/get-line-state`)
+        const data = await res.json()
+        if (data.status === 'success') {
+          setState(prev => ({
+            ...prev,
+            L1: { ...prev.L1,
+              media:   MEDIA_REVERSE[data.lines.L1.media]     ?? prev.L1.media,
+              product: PRODUCT_REVERSE[data.lines.L1.product] ?? prev.L1.product,
+            },
+            L2: { ...prev.L2,
+              media:   MEDIA_REVERSE[data.lines.L2.media]     ?? prev.L2.media,
+              product: PRODUCT_REVERSE[data.lines.L2.product] ?? prev.L2.product,
+            },
+            L3: { ...prev.L3,
+              media:   MEDIA_REVERSE[data.lines.L3.media]     ?? prev.L3.media,
+              product: PRODUCT_REVERSE[data.lines.L3.product] ?? prev.L3.product,
+            },
+            L4: { ...prev.L4,
+              media:   MEDIA_REVERSE[data.lines.L4.media]     ?? prev.L4.media,
+              product: PRODUCT_REVERSE[data.lines.L4.product] ?? prev.L4.product,
+            },
+          }))
+        }
+      } catch (error) {
+        console.error('❌ Could not load initial state from PLC:', error)
+      } finally {
+        setLoaded(true)  // ← always mark as loaded even if PLC unreachable
+      }
+    }
+    fetchInitialState()
 
     // ─────────────────────────────────────────
     // Poll QC every 2 seconds
@@ -110,20 +181,22 @@ export function Screen2Control() {
         const data = await res.json()
         if (data.status === 'success') {
           setRequests(data.requests)
-          const l1 = data.requests['L1']
-          if (l1.media) {
-            setPopup(prev => {
-              if (prev || dismissed) return prev
-              return { line: 'L1', kind: 'media', option: 'Option 1' }
-            })
-            return
-          }
-          if (l1.product) {
-            setPopup(prev => {
-              if (prev || dismissed) return prev
-              return { line: 'L1', kind: 'product', option: null }
-            })
-            return
+          for (const line of ['L1', 'L2', 'L3', 'L4']) {
+            const l = data.requests[line]
+            if (l.media) {
+              setPopup(prev => {
+                if (prev || dismissed) return prev
+                return { line, kind: 'media', option: 'Option 1' }
+              })
+              return
+            }
+            if (l.product) {
+              setPopup(prev => {
+                if (prev || dismissed) return prev
+                return { line, kind: 'product', option: null }
+              })
+              return
+            }
           }
         }
       } catch (error) {
@@ -141,18 +214,23 @@ export function Screen2Control() {
         const res  = await fetch(`${API}/api/get-stop-requests`)
         const data = await res.json()
         if (data.status === 'success') {
-          const { stop_product, stop_option } = data.stops
-          if (stop_product) {
-            setStopPopup(prev => {
-              if (prev || stopDismissed) return prev
-              return { kind: 'product', label: 'Product' }
-            })
-          }
-          if (stop_option) {
-            setStopPopup(prev => {
-              if (prev || stopDismissed) return prev
-              return { kind: 'option', label: 'Media Option 1' }
-            })
+          setStops(data.stops)
+          for (const line of ['L1', 'L2', 'L3', 'L4']) {
+            const s = data.stops[line]
+            if (s.stop_product) {
+              setStopPopup(prev => {
+                if (prev || stopDismissed) return prev
+                return { line, kind: 'product', label: 'Product' }
+              })
+              return
+            }
+            if (s.stop_media) {
+              setStopPopup(prev => {
+                if (prev || stopDismissed) return prev
+                return { line, kind: 'media', label: 'Media Option 1' }
+              })
+              return
+            }
           }
         }
       } catch (error) {
@@ -163,7 +241,6 @@ export function Screen2Control() {
     const stopInterval = setInterval(fetchStopRequests, 1000)
 
     return () => {
-      window.removeEventListener('storage', handleStorageChange)
       clearInterval(qcInterval)
       clearInterval(requestInterval)
       clearInterval(stopInterval)
@@ -172,19 +249,20 @@ export function Screen2Control() {
 
 
   // ─────────────────────────────────────────
-  // Orange underglow — driven by stopPopup
+  // Orange underglow — stop request active
   // ─────────────────────────────────────────
   const hasStopRequest = (id: string) => {
-    if (id === 'L1') return stopPopup !== null
+    if (stopPopup?.line === id) return true
     return false
   }
 
   // ─────────────────────────────────────────
-  // Red underglow — active request
+  // Red underglow — media/product request
   // ─────────────────────────────────────────
   const hasRequest = (id: string) => {
-    if (id === 'L1') return requests.L1.media || requests.L1.product
-    return false
+    const line = requests[id as keyof RequestState]
+    if (!line) return false
+    return line.media || line.product
   }
 
 
@@ -198,7 +276,7 @@ export function Screen2Control() {
       await fetch(`${API}/api/clear-request`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ kind: popup.kind })
+        body:    JSON.stringify({ kind: popup.kind, line: popup.line })
       })
     } catch (error) {
       console.error('❌ Could not clear request:', error)
@@ -210,7 +288,6 @@ export function Screen2Control() {
 
   // ─────────────────────────────────────────
   // Acknowledge stop popup
-  // clears popup → orange underglow turns off
   // ─────────────────────────────────────────
   const handleStopAcknowledge = async () => {
     if (!stopPopup) return
@@ -219,7 +296,7 @@ export function Screen2Control() {
       await fetch(`${API}/api/clear-stop-request`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ kind: stopPopup.kind })
+        body:    JSON.stringify({ kind: stopPopup.kind, line: stopPopup.line })
       })
     } catch (error) {
       console.error('❌ Could not clear stop request:', error)
@@ -269,13 +346,33 @@ export function Screen2Control() {
     { id: 'L4' as const, data: state.L4 },
   ];
 
+  // ─────────────────────────────────────────
+  // Show loading screen until PLC data loaded
+  // ─────────────────────────────────────────
+  if (!loaded) return (
+    <div className="min-h-screen bg-slate-800 flex items-center justify-center">
+      <div className="text-center">
+        <div className="text-5xl mb-4 animate-pulse">⚙️</div>
+        <p className="text-slate-400 text-xl">Loading from PLC...</p>
+      </div>
+    </div>
+  )
+
   return (
     <div className="min-h-screen bg-slate-800 p-8">
       <div className="max-w-7xl mx-auto">
 
         {/* Header */}
-        <div className="bg-gradient-to-r text-center from-green-600 to-green-700 text-white px-5 py-4 mb-5 rounded-lg shadow-xl">
+        <div className="bg-gradient-to-r text-center from-green-600 to-green-700 text-white px-5 py-4 mb-5 rounded-lg shadow-xl flex items-center justify-between">
+          <div className="w-32" />  {/* spacer */}
           <h1 className="text-3xl font-bold tracking-wide">Control Panel</h1>
+
+          <a
+            href="/logs"
+            className="bg-white/20 hover:bg-white/30 text-white font-bold px-5 py-2 rounded-lg transition-colors text-lg w-32 text-center"
+          >
+            View Logs
+          </a>
         </div>
 
         {/* Main content */}
@@ -428,7 +525,7 @@ export function Screen2Control() {
             </h2>
             <div className="flex justify-center mb-3">
               <span className="bg-orange-600 text-white text-2xl font-extrabold px-6 py-2 rounded-xl">
-                L1
+                {stopPopup.line}
               </span>
             </div>
             <div className="bg-slate-900 border-2 border-orange-400 rounded-xl px-4 py-4 mb-6 text-center">

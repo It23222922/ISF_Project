@@ -35,24 +35,39 @@ interface LineRequests {
 
 interface RequestState {
   L1: LineRequests;
+  L2: LineRequests;
+  L3: LineRequests;
+  L4: LineRequests;
 }
 
 // ─────────────────────────────────────────
 // Stop state type
 // ─────────────────────────────────────────
-interface StopState {
+interface LineStops {
   stop_product: boolean;
-  stop_option:  boolean;
+  stop_media:   boolean;
+}
+
+interface StopState {
+  L1: LineStops;
+  L2: LineStops;
+  L3: LineStops;
+  L4: LineStops;
 }
 
 export function Screen1Display() {
   const [state, setState]       = useState<SystemState>(getSystemState());
   const [requests, setRequests] = useState<RequestState>({
-    L1: { media: false, product: false, media_option: null, product_option: null }
+    L1: { media: false, product: false, media_option: null, product_option: null },
+    L2: { media: false, product: false, media_option: null, product_option: null },
+    L3: { media: false, product: false, media_option: null, product_option: null },
+    L4: { media: false, product: false, media_option: null, product_option: null },
   });
   const [stops, setStops]       = useState<StopState>({
-    stop_product: false,
-    stop_option:  false,
+    L1: { stop_product: false, stop_media: false },
+    L2: { stop_product: false, stop_media: false },
+    L3: { stop_product: false, stop_media: false },
+    L4: { stop_product: false, stop_media: false },
   });
   const [flash, setFlash]       = useState(false);
 
@@ -70,7 +85,6 @@ export function Screen1Display() {
   useEffect(() => {
     // ─────────────────────────────────────────
     // Poll media + product from PLC every second
-    // replaces localStorage polling
     // ─────────────────────────────────────────
     const fetchLineState = async () => {
       try {
@@ -184,14 +198,22 @@ export function Screen1Display() {
     { id: 'L4', data: state.L4 },
   ];
 
+  // ─────────────────────────────────────────
+  // Red underglow — active request per line
+  // ─────────────────────────────────────────
   const hasRequest = (id: string) => {
-    if (id === 'L1') return requests.L1.media || requests.L1.product
-    return false
+    const line = requests[id as keyof RequestState]
+    if (!line) return false
+    return line.media || line.product
   }
 
+  // ─────────────────────────────────────────
+  // Orange underglow — stop active per line
+  // ─────────────────────────────────────────
   const hasStopped = (id: string) => {
-    if (id === 'L1') return stops.stop_product || stops.stop_option
-    return false
+    const line = stops[id as keyof StopState]
+    if (!line) return false
+    return line.stop_product || line.stop_media
   }
 
   return (

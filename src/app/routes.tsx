@@ -2,6 +2,7 @@ import { createBrowserRouter } from "react-router";
 import { HomeSelector } from "./components/HomeSelector";
 import { Screen1Display } from "./components/Screen1Display";
 import { Screen2Control } from "./components/Screen2Control";
+import { LogPage } from './components/LogPage';
 
 // ─────────────────────────────────────────
 // Block Screen 2 if accessed from network IP
@@ -43,4 +44,14 @@ export const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+  // Add inside createBrowserRouter:
+{
+  path: '/logs',
+  element: (
+    <ProtectedRoute>
+      <LogPage />
+    </ProtectedRoute>
+  ),
+},
 ]);
+

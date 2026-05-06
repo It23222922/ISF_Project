@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { SystemState, MEDIA_OPTIONS, PRODUCT_OPTIONS } from '../types';
+import { useEffect, useMemo, useState } from 'react';
+import { OptionItem, SystemState } from '../types';
 import { getSystemState, setSystemState } from '../utils/storage';
 import {
   Select,
@@ -13,22 +13,6 @@ import {
 // API base URL — from .env
 // ─────────────────────────────────────────
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
-
-// ─────────────────────────────────────────
-// Reverse maps — PLC int → option string
-// ─────────────────────────────────────────
-const MEDIA_REVERSE: Record<number, string> = {
-  1: 'Option 1', 2: 'Option 2', 3: 'Option 3',
-  4: 'Option 4', 5: 'Option 5',
-}
-
-const PRODUCT_REVERSE: Record<number, string> = {
-  1:  'Option 1',  2:  'Option 2',  3:  'Option 3',
-  4:  'Option 4',  5:  'Option 5',  6:  'Option 6',
-  7:  'Option 7',  8:  'Option 8',  9:  'Option 9',
-  10: 'Option 10', 11: 'Option 11', 12: 'Option 12',
-  13: 'Option 13', 14: 'Option 14', 15: 'Option 15',
-}
 
 // ─────────────────────────────────────────
 // Popup types
@@ -73,6 +57,8 @@ interface StopState {
 
 export function Screen2Control() {
   const [state, setState]                 = useState<SystemState>(getSystemState());
+  const [mediaOptions, setMediaOptions]   = useState<OptionItem[]>([]);
+  const [productOptions, setProductOptions] = useState<OptionItem[]>([]);
   const [popup, setPopup]                 = useState<PopupInfo | null>(null);
   const [stopPopup, setStopPopup]         = useState<StopPopupInfo | null>(null);
   const [dismissed, setDismissed]         = useState(false);
@@ -92,6 +78,23 @@ export function Screen2Control() {
   const [flash, setFlash]                 = useState(false);
   const [loaded, setLoaded]               = useState(false);  // ← prevents flicker before PLC load
 
+  const mediaReverse = useMemo(() => {
+    return mediaOptions.reduce<Record<number, string>>((acc, option) => {
+      acc[option.id] = option.name;
+      return acc;
+    }, {});
+  }, [mediaOptions]);
+
+  const productReverse = useMemo(() => {
+    return productOptions.reduce<Record<number, string>>((acc, option) => {
+      acc[option.id] = option.name;
+      return acc;
+    }, {});
+  }, [productOptions]);
+
+  const mediaOptionNames = useMemo(() => mediaOptions.map(option => option.name), [mediaOptions]);
+  const productOptionNames = useMemo(() => productOptions.map(option => option.name), [productOptions]);
+
   // ─────────────────────────────────────────
   // Flash timer — toggles every 500ms
   // ─────────────────────────────────────────
@@ -102,6 +105,25 @@ export function Screen2Control() {
     return () => clearInterval(flashInterval)
   }, [])
 
+
+  useEffect(() => {
+    // ─────────────────────────────────────────
+    // Load media + product options from DB
+    // ─────────────────────────────────────────
+    const fetchOptions = async () => {
+      try {
+        const res = await fetch(`${API}/api/options`)
+        const data = await res.json()
+        if (data.status === 'success') {
+          setMediaOptions(data.media)
+          setProductOptions(data.product)
+        }
+      } catch (error) {
+        console.error('❌ Could not load media/product options:', error)
+      }
+    }
+    fetchOptions()
+  }, [])
 
   useEffect(() => {
     // ─────────────────────────────────────────
@@ -116,20 +138,20 @@ export function Screen2Control() {
           setState(prev => ({
             ...prev,
             L1: { ...prev.L1,
-              media:   MEDIA_REVERSE[data.lines.L1.media]     ?? prev.L1.media,
-              product: PRODUCT_REVERSE[data.lines.L1.product] ?? prev.L1.product,
+              media:   mediaReverse[data.lines.L1.media]     ?? prev.L1.media,
+              product: productReverse[data.lines.L1.product] ?? prev.L1.product,
             },
             L2: { ...prev.L2,
-              media:   MEDIA_REVERSE[data.lines.L2.media]     ?? prev.L2.media,
-              product: PRODUCT_REVERSE[data.lines.L2.product] ?? prev.L2.product,
+              media:   mediaReverse[data.lines.L2.media]     ?? prev.L2.media,
+              product: productReverse[data.lines.L2.product] ?? prev.L2.product,
             },
             L3: { ...prev.L3,
-              media:   MEDIA_REVERSE[data.lines.L3.media]     ?? prev.L3.media,
-              product: PRODUCT_REVERSE[data.lines.L3.product] ?? prev.L3.product,
+              media:   mediaReverse[data.lines.L3.media]     ?? prev.L3.media,
+              product: productReverse[data.lines.L3.product] ?? prev.L3.product,
             },
             L4: { ...prev.L4,
-              media:   MEDIA_REVERSE[data.lines.L4.media]     ?? prev.L4.media,
-              product: PRODUCT_REVERSE[data.lines.L4.product] ?? prev.L4.product,
+              media:   mediaReverse[data.lines.L4.media]     ?? prev.L4.media,
+              product: productReverse[data.lines.L4.product] ?? prev.L4.product,
             },
           }))
         }
@@ -186,7 +208,7 @@ export function Screen2Control() {
             if (l.media) {
               setPopup(prev => {
                 if (prev || dismissed) return prev
-                return { line, kind: 'media', option: 'Option 1' }
+                return { line, kind: 'media', option: mediaOptions[0]?.name ?? null }
               })
               return
             }
@@ -227,7 +249,7 @@ export function Screen2Control() {
             if (s.stop_media) {
               setStopPopup(prev => {
                 if (prev || stopDismissed) return prev
-                return { line, kind: 'media', label: 'Media Option 1' }
+                return { line, kind: 'media', label: mediaOptions[0]?.name ?? 'Media' }
               })
               return
             }
@@ -245,7 +267,7 @@ export function Screen2Control() {
       clearInterval(requestInterval)
       clearInterval(stopInterval)
     };
-  }, [dismissed, stopDismissed]);
+  }, [dismissed, stopDismissed, mediaOptions, mediaReverse, productReverse]);
 
 
   // ─────────────────────────────────────────
@@ -431,11 +453,17 @@ export function Screen2Control() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {MEDIA_OPTIONS.map((option) => (
-                      <SelectItem key={option} value={option} className="text-xl">
-                        {option}
+                    {mediaOptionNames.length === 0 ? (
+                      <SelectItem value="" disabled className="text-xl">
+                        Loading options...
                       </SelectItem>
-                    ))}
+                    ) : (
+                      mediaOptionNames.map((option) => (
+                        <SelectItem key={option} value={option} className="text-xl">
+                          {option}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -450,11 +478,17 @@ export function Screen2Control() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {PRODUCT_OPTIONS.map((option) => (
-                      <SelectItem key={option} value={option} className="text-xl">
-                        {option}
+                    {productOptionNames.length === 0 ? (
+                      <SelectItem value="" disabled className="text-xl">
+                        Loading options...
                       </SelectItem>
-                    ))}
+                    ) : (
+                      productOptionNames.map((option) => (
+                        <SelectItem key={option} value={option} className="text-xl">
+                          {option}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>

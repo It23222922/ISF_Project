@@ -27,47 +27,36 @@ class EventLog(db.Model):
     event     = db.Column(db.String(50),  nullable=False)
     details   = db.Column(db.String(200), nullable=True)
 
+
+# ─────────────────────────────────────────
+# Media/Product Option Models
+# ─────────────────────────────────────────
+class MediaOption(db.Model):
+    __tablename__ = 'Media'
+    id         = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    Media_name = db.Column(db.String(200), nullable=False)
+
+
+class ProductOption(db.Model):
+    __tablename__ = 'Product'
+    id           = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    Product_name = db.Column(db.String(200), nullable=False)
+
 # Create tables on startup
 with app.app_context():
     db.create_all()
 
 # ─────────────────────────────────────────
-# Media Options (5 options)
+# Options map helpers (DB driven)
 # ─────────────────────────────────────────
-MEDIA_MAP = {
-    'Option 1': 1,
-    'Option 2': 2,
-    'Option 3': 3,
-    'Option 4': 4,
-    'Option 5': 5,
-}
-
-# ─────────────────────────────────────────
-# Product Options (15 options)
-# ─────────────────────────────────────────
-PRODUCT_MAP = {
-    'Option 1':  1,
-    'Option 2':  2,
-    'Option 3':  3,
-    'Option 4':  4,
-    'Option 5':  5,
-    'Option 6':  6,
-    'Option 7':  7,
-    'Option 8':  8,
-    'Option 9':  9,
-    'Option 10': 10,
-    'Option 11': 11,
-    'Option 12': 12,
-    'Option 13': 13,
-    'Option 14': 14,
-    'Option 15': 15,
-}
-
-# ─────────────────────────────────────────
-# Reverse maps — int → string (for logging)
-# ─────────────────────────────────────────
-MEDIA_REVERSE   = {v: k for k, v in MEDIA_MAP.items()}
-PRODUCT_REVERSE = {v: k for k, v in PRODUCT_MAP.items()}
+def load_option_maps():
+    media_rows = MediaOption.query.order_by(MediaOption.id).all()
+    product_rows = ProductOption.query.order_by(ProductOption.id).all()
+    media_map = {row.Media_name: row.id for row in media_rows}
+    product_map = {row.Product_name: row.id for row in product_rows}
+    media_reverse = {row.id: row.Media_name for row in media_rows}
+    product_reverse = {row.id: row.Product_name for row in product_rows}
+    return media_map, product_map, media_reverse, product_reverse
 
 # ─────────────────────────────────────────
 # PLC Tags per Line
@@ -138,8 +127,9 @@ def set_line():
     if line not in PLC_TAGS:
         return jsonify({ 'status': 'error', 'message': f'Invalid line: {line}' }), 400
 
-    media_val   = MEDIA_MAP.get(media)
-    product_val = PRODUCT_MAP.get(product)
+    media_map, product_map, media_reverse, product_reverse = load_option_maps()
+    media_val   = media_map.get(media)
+    product_val = product_map.get(product)
 
     if media_val is None or product_val is None:
         return jsonify({ 'status': 'error', 'message': 'Invalid option selected' }), 400
@@ -158,13 +148,13 @@ def set_line():
             db.session.add(EventLog(
                 line    = line,
                 event   = 'change_media',
-                details = f"{MEDIA_REVERSE.get(old_media, old_media)} → {media}"
+                details = f"{media_reverse.get(old_media, old_media)} → {media}"
             ))
         if old_product != product_val:
             db.session.add(EventLog(
                 line    = line,
                 event   = 'change_product',
-                details = f"{PRODUCT_REVERSE.get(old_product, old_product)} → {product}"
+                details = f"{product_reverse.get(old_product, old_product)} → {product}"
             ))
         db.session.commit()
 
@@ -187,18 +177,42 @@ def set_line():
 def set_all():
     data = request.json
     try:
+        media_map, product_map, _, _ = load_option_maps()
         with LogixDriver(PLC_IP) as plc:
             for line, values in data.items():
                 if line not in PLC_TAGS:
                     continue
                 tags        = PLC_TAGS[line]
-                media_val   = MEDIA_MAP.get(values['media'])
-                product_val = PRODUCT_MAP.get(values['product'])
+                media_val   = media_map.get(values['media'])
+                product_val = product_map.get(values['product'])
                 if None in (media_val, product_val):
                     return jsonify({ 'status': 'error', 'message': f'Invalid value in {line}' }), 400
                 plc.write(tags['media'],   media_val)
                 plc.write(tags['product'], product_val)
         return jsonify({ 'status': 'success', 'message': 'All lines written to PLC' })
+    except Exception as e:
+        return jsonify({ 'status': 'error', 'message': str(e) }), 500
+
+
+# ─────────────────────────────────────────
+# READ — Media and Product options from DB
+# ─────────────────────────────────────────
+@app.route('/api/options', methods=['GET'])
+def get_options():
+    try:
+        media_rows = MediaOption.query.order_by(MediaOption.id).all()
+        product_rows = ProductOption.query.order_by(ProductOption.id).all()
+        return jsonify({
+            'status': 'success',
+            'media': [
+                { 'id': row.id, 'name': row.Media_name }
+                for row in media_rows
+            ],
+            'product': [
+                { 'id': row.id, 'name': row.Product_name }
+                for row in product_rows
+            ],
+        })
     except Exception as e:
         return jsonify({ 'status': 'error', 'message': str(e) }), 500
 

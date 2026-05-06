@@ -1,27 +1,11 @@
-import { useEffect, useState } from 'react';
-import { SystemState } from '../types';
+import { useEffect, useMemo, useState } from 'react';
+import { OptionItem, SystemState } from '../types';
 import { getSystemState } from '../utils/storage';
 
 // ─────────────────────────────────────────
 // API base URL — from .env
 // ─────────────────────────────────────────
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
-
-// ─────────────────────────────────────────
-// Reverse maps — PLC int → option string
-// ─────────────────────────────────────────
-const MEDIA_REVERSE: Record<number, string> = {
-  1: 'Option 1', 2: 'Option 2', 3: 'Option 3',
-  4: 'Option 4', 5: 'Option 5',
-}
-
-const PRODUCT_REVERSE: Record<number, string> = {
-  1:  'Option 1',  2:  'Option 2',  3:  'Option 3',
-  4:  'Option 4',  5:  'Option 5',  6:  'Option 6',
-  7:  'Option 7',  8:  'Option 8',  9:  'Option 9',
-  10: 'Option 10', 11: 'Option 11', 12: 'Option 12',
-  13: 'Option 13', 14: 'Option 14', 15: 'Option 15',
-}
 
 // ─────────────────────────────────────────
 // Request state type
@@ -57,6 +41,8 @@ interface StopState {
 
 export function Screen1Display() {
   const [state, setState]       = useState<SystemState>(getSystemState());
+  const [mediaOptions, setMediaOptions] = useState<OptionItem[]>([]);
+  const [productOptions, setProductOptions] = useState<OptionItem[]>([]);
   const [requests, setRequests] = useState<RequestState>({
     L1: { media: false, product: false, media_option: null, product_option: null },
     L2: { media: false, product: false, media_option: null, product_option: null },
@@ -71,6 +57,20 @@ export function Screen1Display() {
   });
   const [flash, setFlash]       = useState(false);
 
+  const mediaReverse = useMemo(() => {
+    return mediaOptions.reduce<Record<number, string>>((acc, option) => {
+      acc[option.id] = option.name;
+      return acc;
+    }, {});
+  }, [mediaOptions]);
+
+  const productReverse = useMemo(() => {
+    return productOptions.reduce<Record<number, string>>((acc, option) => {
+      acc[option.id] = option.name;
+      return acc;
+    }, {});
+  }, [productOptions]);
+
   // ─────────────────────────────────────────
   // Flash timer — toggles every 500ms
   // ─────────────────────────────────────────
@@ -84,6 +84,25 @@ export function Screen1Display() {
 
   useEffect(() => {
     // ─────────────────────────────────────────
+    // Load media + product options from DB
+    // ─────────────────────────────────────────
+    const fetchOptions = async () => {
+      try {
+        const res = await fetch(`${API}/api/options`)
+        const data = await res.json()
+        if (data.status === 'success') {
+          setMediaOptions(data.media)
+          setProductOptions(data.product)
+        }
+      } catch (error) {
+        console.error('❌ Could not load media/product options:', error)
+      }
+    }
+    fetchOptions()
+  }, [])
+
+  useEffect(() => {
+    // ─────────────────────────────────────────
     // Poll media + product from PLC every second
     // ─────────────────────────────────────────
     const fetchLineState = async () => {
@@ -94,20 +113,20 @@ export function Screen1Display() {
           setState(prev => ({
             ...prev,
             L1: { ...prev.L1,
-              media:   MEDIA_REVERSE[data.lines.L1.media]     ?? prev.L1.media,
-              product: PRODUCT_REVERSE[data.lines.L1.product] ?? prev.L1.product,
+              media:   mediaReverse[data.lines.L1.media]     ?? prev.L1.media,
+              product: productReverse[data.lines.L1.product] ?? prev.L1.product,
             },
             L2: { ...prev.L2,
-              media:   MEDIA_REVERSE[data.lines.L2.media]     ?? prev.L2.media,
-              product: PRODUCT_REVERSE[data.lines.L2.product] ?? prev.L2.product,
+              media:   mediaReverse[data.lines.L2.media]     ?? prev.L2.media,
+              product: productReverse[data.lines.L2.product] ?? prev.L2.product,
             },
             L3: { ...prev.L3,
-              media:   MEDIA_REVERSE[data.lines.L3.media]     ?? prev.L3.media,
-              product: PRODUCT_REVERSE[data.lines.L3.product] ?? prev.L3.product,
+              media:   mediaReverse[data.lines.L3.media]     ?? prev.L3.media,
+              product: productReverse[data.lines.L3.product] ?? prev.L3.product,
             },
             L4: { ...prev.L4,
-              media:   MEDIA_REVERSE[data.lines.L4.media]     ?? prev.L4.media,
-              product: PRODUCT_REVERSE[data.lines.L4.product] ?? prev.L4.product,
+              media:   mediaReverse[data.lines.L4.media]     ?? prev.L4.media,
+              product: productReverse[data.lines.L4.product] ?? prev.L4.product,
             },
           }))
         }
@@ -189,7 +208,7 @@ export function Screen1Display() {
       clearInterval(requestInterval)
       clearInterval(stopInterval)
     }
-  }, []);
+  }, [mediaReverse, productReverse]);
 
   const lines = [
     { id: 'L1', data: state.L1 },

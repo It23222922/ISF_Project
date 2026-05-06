@@ -4,6 +4,12 @@ This is a code bundle for Factory Screen UI Design. The original project is avai
 
 ## Setup
 
+### Prerequisites
+
+- Node.js 18+ (for Vite 6)
+- Python 3.10
+- MySQL (if you use the backend in server.py)
+
 ### Frontend (Vite + React)
 
 Install frontend dependencies:
@@ -17,6 +23,22 @@ Start the frontend:
 ```bash
 npm run dev
 ```
+
+### Backend (Flask)
+
+Create and activate a virtual environment (optional but recommended), then install Python deps:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run the backend:
+
+```bash
+python server.py
+```
+
+Note: Update the MySQL connection string in server.py to match the new PC.
 
 ## Installed Libraries
 
